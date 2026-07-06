@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "0 9/12 * * *"
   workflow_dispatch:
+    inputs:
+      frida_version:
+        description: "Frida version to build, for example 17.7.3. Leave empty to use latest."
+        required: false
+        type: string
   push:
     branches: ["main", "ci"]
     paths:
@@ -18,19 +23,32 @@ jobs:
       FRIDA_VERSION: ${{ steps.pullFridaLatestRelease.outputs.FRIDA_VERSION }}
       ALREADY_RELEASE: ${{ steps.checkReleaseVersion.outputs.ALREADY_RELEASE }}
     steps:
-      - name: Pull Frida Latest Release
+      - name: Resolve Frida Release
         id: pullFridaLatestRelease
         uses: actions/github-script@v3
         with:
           github-token: ${{secrets.GITHUB_TOKEN}}
           script: |
-            const releaseResponse = await github.repos.getLatestRelease({
-              owner: 'frida',
-              repo: 'frida',
-            })
-            const {
-              data: { tag_name: ver }
-            } = releaseResponse;
+            const requested = `${{ github.event.inputs.frida_version || '' }}`.trim();
+            let ver;
+            if (requested.length > 0) {
+              const tag = requested.startsWith('v') ? requested.slice(1) : requested;
+              await github.repos.getReleaseByTag({
+                owner: 'frida',
+                repo: 'frida',
+                tag,
+              });
+              ver = tag;
+            } else {
+              const releaseResponse = await github.repos.getLatestRelease({
+                owner: 'frida',
+                repo: 'frida',
+              })
+              const {
+                data: { tag_name }
+              } = releaseResponse;
+              ver = tag_name;
+            }
             core.setOutput('FRIDA_VERSION', ver);
 
       - name: Split Repository Name
@@ -145,7 +163,7 @@ jobs:
         export ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}
         echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
         
-        git clone --recurse-submodules https://github.com/frida/frida
+        git clone --recurse-submodules --branch "${{ needs.check_version.outputs.FRIDA_VERSION }}" https://github.com/frida/frida
         cd frida
         for path in ../patches/*
         do
